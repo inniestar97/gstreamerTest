@@ -1,3 +1,7 @@
+# PREREQUSIT
+
+* gstreamer
+
 # BUILD
 
 ```bash

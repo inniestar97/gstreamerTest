@@ -27,9 +27,11 @@ int main(int argc, char* argv[]) {
     }
 
     GstElement* video_udpsrc = gst_element_factory_make("udpsrc", "video_udpsrc");
+    GstElement* audio_udpsrc = gst_element_factory_make("udpsrc", "audio_udpsrc");
     g_object_set(video_udpsrc, "port", 13131, NULL);
+    g_object_set(audio_udpsrc, "port", 12121, NULL);
 
-    if (!video_udpsrc) {
+    if (!video_udpsrc || !audio_udpsrc) {
         g_printerr("udpsrc not constructed");
         return -1;
     }
@@ -39,13 +41,25 @@ int main(int argc, char* argv[]) {
     GstElement* videoscale = gst_element_factory_make("videoscale", "videoscale");
 
     if (!h264parse || !avdec_h264 || !videoscale) {
-        g_printerr("converting process not complete");
+        g_printerr("converting video process not complete");
         return -1;
     }
 
+    GstElement* audioconvert = gst_element_factory_make("audioconvert", "audioconvert");
+    GstElement* audioresample = gst_element_factory_make("audioresample", "audioresample");
+
+    if (!audioconvert || !audioresample) {
+        g_printerr("converting audio process not complete");
+        return -1;
+    }
+
+    GstCaps* audio_init_caps =
+        gst_caps_new_simple("audio/x-raw", "format", G_TYPE_STRING, "S16LE", "channels", G_TYPE_INT, 2, "layout", G_TYPE_STRING, "interleaved", "rate", G_TYPE_INT, 44100, NULL);
     GstCaps* video_scale_caps =
         gst_caps_new_simple("video/x-raw", "width", G_TYPE_INT, WIDTH, "height", G_TYPE_INT, HEIGHT, NULL);
 
+    GstElement* audio_init_filter = gst_element_factory_make("capsfilter", "audio_init_caps_filter");
+    g_object_set(audio_init_filter, "caps", audio_init_caps, NULL);
     GstElement* video_scale_filter = gst_element_factory_make("capsfilter", "video_scale_caps_filter");
     g_object_set(video_scale_filter, "caps", video_scale_caps, NULL);
 
@@ -53,18 +67,31 @@ int main(int argc, char* argv[]) {
         g_printerr("video scale filter is not constructed");
         return -1;
     }
-
-    GstElement* autovideosink = gst_element_factory_make("autovideosink", "autovideosink");
-
-    if (!autovideosink) {
-        g_printerr("videosink is not constructed");
+    if (!audio_init_filter) {
+        g_printerr("audio scale filter is not constructed");
         return -1;
     }
 
-    gst_bin_add_many(GST_BIN(pipeline), video_udpsrc, h264parse, avdec_h264, videoscale, video_scale_filter, autovideosink, NULL);
+    GstElement* autovideosink = gst_element_factory_make("autovideosink", "autovideosink");
+    GstElement* autoaudiosink = gst_element_factory_make("autoaudiosink", "autoaudiosink");
+
+    if (!autovideosink || !autoaudiosink) {
+        g_printerr("videosink and audiosink are not constructed");
+        return -1;
+    }
+
+    gst_bin_add_many(
+        GST_BIN(pipeline),
+        video_udpsrc, h264parse, avdec_h264, videoscale, video_scale_filter, autovideosink,
+        audio_udpsrc, audio_init_filter, audioconvert, audioresample, autoaudiosink,
+        NULL
+    );
+
     GSTCHECK(gst_element_link_many(video_udpsrc, h264parse, avdec_h264, videoscale, video_scale_filter, autovideosink, NULL));
+    GSTCHECK(gst_element_link_many(audio_udpsrc, audio_init_filter, audioconvert, audioresample, autoaudiosink, NULL));
 
     gst_caps_unref(video_scale_caps);
+    gst_caps_unref(audio_init_caps);
 
     auto ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
     if (ret == GST_STATE_CHANGE_FAILURE) {
